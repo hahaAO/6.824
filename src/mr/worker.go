@@ -44,7 +44,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		case TypeMap:
 			reply := CallAskMap()
 			if len(reply.InputFilename) == 0 {
-				time.Sleep(1 * time.Second)
+				time.Sleep(20 * time.Millisecond)
 				continue
 			}
 			var intermediateFiles []*os.File
@@ -92,36 +92,19 @@ func Worker(mapf func(string, string) []KeyValue,
 		case TypeReduce:
 			reply := CallAskReduce()
 			if len(reply.IntermediateFiles) == 0 {
-				time.Sleep(1 * time.Second)
+				time.Sleep(20 * time.Millisecond)
 				continue
 			}
-			// 尝试打开文件
+			// read intermediateFile
+			intermediateFileMap := make(map[string][]string)
 			for _, intermediateFile := range reply.IntermediateFiles {
-				outFilename := ""
-				if outIndex, err := strconv.Atoi(intermediateFile[len(intermediateFile)-1:]); err != nil {
-					panic(fmt.Sprintf("intermediateFile name %s error\n", intermediateFile))
-				} else {
-					outFilename = "mr-out-" + strconv.Itoa(outIndex)
-				}
-
 				file, err := os.Open(intermediateFile)
 				if err != nil {
 					fmt.Println("Error opening file2:", intermediateFile, " error: ", err)
 					return
 				}
 				defer file.Close()
-
-				outfile, err := os.OpenFile(outFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-				if err != nil {
-					// 打开文件失败，输出错误信息
-					fmt.Println("Error opening file:", err)
-					return
-				}
-				defer outfile.Close()
-
 				scanner := bufio.NewScanner(file)
-				intermediateFileMap := make(map[string][]string)
-
 				for scanner.Scan() {
 					line := scanner.Text()
 					parts := strings.Split(line, " ")
@@ -131,23 +114,34 @@ func Worker(mapf func(string, string) []KeyValue,
 				}
 				// 检查是否有错误发生
 				if err := scanner.Err(); err != nil {
-					fmt.Println("Error!!!! scan file:", err)
+					fmt.Println("scan Error!!!!  file: ", intermediateFile, " error: ", err)
 					os.Exit(1)
 				}
 
-				writeContent := ""
-				for k, v := range intermediateFileMap {
-					reducefRes := reducef(k, v)
-					writeContent += fmt.Sprintf("%s %s\n", k, reducefRes)
-					CallAskTask() // just ping
-				}
-				// 所有计算成功才能写而不是每次计算都写
-				outfile.WriteString(writeContent)
 			}
+			// open mr-out File
+			outFilename := "mr-out-" + strconv.Itoa(reply.CompleteReduceTaskId)
+			outFile, err := os.OpenFile(outFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				fmt.Println("Error opening file:", err)
+				os.Exit(1)
+			}
+			defer outFile.Close()
+
+			// write mr-out File
+			writeContent := ""
+			for k, v := range intermediateFileMap {
+				reducefRes := reducef(k, v)
+				writeContent += fmt.Sprintf("%s %s\n", k, reducefRes)
+				CallAskTask() // just ping
+			}
+			// 所有计算成功才能写而不是每次计算都写
+			outFile.WriteString(writeContent)
+
 			// fmt.Println("CallCompleteTask(TypeReduce, 1): ClientId ", myClientId)
 			CallCompleteTask(TypeReduce, nil, nil, &reply.CompleteReduceTaskId)
 		case TypeWait:
-			time.Sleep(1 * time.Second)
+			time.Sleep(20 * time.Millisecond)
 		case TypeDown:
 			return
 

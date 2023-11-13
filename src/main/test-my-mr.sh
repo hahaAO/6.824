@@ -29,53 +29,44 @@ rm -f mr-*
 (cd .. && go build $RACE mrsequential.go) || exit 1
 
 failed_any=0
+
 #########################################################
-echo '***' Starting crash test.
+# first word-count
 
 # generate the correct output
-../mrsequential ../../mrapps/nocrash.so ../pg*txt || exit 1
-sort mr-out-0 > mr-correct-crash.txt
+../mrsequential ../../mrapps/wc.so ../pg*txt || exit 1
+sort mr-out-0 > mr-correct-wc.txt
 rm -f mr-out*
 
-rm -f mr-done
-(timeout -k 2s 180s ../mrcoordinator ../pg*txt ; touch mr-done ) &
+echo '***' Starting wc test.
+
+timeout -k 2s 180s ../mrcoordinator ../pg*txt &
+pid=$!
+
+# give the coordinator time to create the sockets.
 sleep 1
 
-# start multiple workers
-timeout -k 2s 180s ../mrworker ../../mrapps/crash.so &
+# start multiple workers.
+timeout -k 2s 180s ../mrworker ../../mrapps/wc.so &
+timeout -k 2s 180s ../mrworker ../../mrapps/wc.so &
+timeout -k 2s 180s ../mrworker ../../mrapps/wc.so &
 
-# mimic rpc.go's coordinatorSock()
-SOCKNAME=/var/tmp/824-mr-`id -u`
+# wait for the coordinator to exit.
+wait $pid
 
-( while [ -e $SOCKNAME -a ! -f mr-done ]
-  do
-    timeout -k 2s 180s ../mrworker ../../mrapps/crash.so
-    sleep 1
-  done ) &
-
-( while [ -e $SOCKNAME -a ! -f mr-done ]
-  do
-    timeout -k 2s 180s ../mrworker ../../mrapps/crash.so
-    sleep 1
-  done ) &
-
-while [ -e $SOCKNAME -a ! -f mr-done ]
-do
-  timeout -k 2s 180s ../mrworker ../../mrapps/crash.so
-  sleep 1
-done
-
-wait
-
-rm $SOCKNAME
-sort mr-out* | grep . > mr-crash-all
-if cmp mr-crash-all mr-correct-crash.txt
+# since workers are required to exit when a job is completely finished,
+# and not before, that means the job has finished.
+sort mr-out* | grep . > mr-wc-all
+if cmp mr-wc-all mr-correct-wc.txt
 then
-  echo '---' crash test: PASS
+  echo '---' wc test: PASS
 else
-  echo '---' crash output is not the same as mr-correct-crash.txt
-  echo '---' crash test: FAIL
+  echo '---' wc output is not the same as mr-correct-wc.txt
+  echo '---' wc test: FAIL
   failed_any=1
 fi
+
+# wait for remaining workers and coordinator to exit.
+wait
 
 #########################################################

@@ -49,7 +49,7 @@ var reduceTaskDoingNum int = 0
 var reduceTaskCompletedNum int = 0
 var reduceTaskNum_M sync.Mutex
 
-const clientCrashTime = 15 * time.Second
+const clientCrashTime = 12 * time.Second
 
 var clientLastPingTime map[string]time.Time
 var clientLastPingTime_M sync.Mutex
@@ -151,18 +151,15 @@ func (c *Coordinator) AskReduce(args *AskReduceArgs, reply *AskReduceReply) erro
 	reduceTaskNum_M.Lock()
 	defer reduceTaskNum_M.Unlock()
 
-	fmt.Printf("AskReduce: in\n")
 	if reduceWaitingTaskNum == 0 {
-		fmt.Printf("reduceWaitingTaskNum == 0")
 		return nil
 	}
-	fmt.Printf("AskReduce for start\n")
 
 	for reduceTaskId, state := range reduceTaskState {
 		if state == waiting {
 			reduceTaskState[reduceTaskId] = doing
 			reply.IntermediateFiles = intermediateFileMap[reduceTaskId]
-			fmt.Printf("reply.IntermediateFiles: %v\n", reply.IntermediateFiles)
+			reply.CompleteReduceTaskId = reduceTaskId
 			reduceWaitingTaskNum--
 			reduceTaskDoingNum++
 			go func(doingReduceTaskId int, clientId string) {
@@ -216,7 +213,6 @@ func (c *Coordinator) CompleteTask(args *CompleteTaskArgs, reply *CompleteTaskRe
 		mapTaskCompleteNum++
 		// fmt.Printf("args.InputFileNames: %v\n", args.InputFileNames)
 		// fmt.Printf("args.CompleteMapFileNames: %v\n", args.CompleteMapFileNames)
-
 		for _, fileName := range args.InputFileNames {
 			mapTaskState[fileName] = complete
 		}
@@ -224,8 +220,14 @@ func (c *Coordinator) CompleteTask(args *CompleteTaskArgs, reply *CompleteTaskRe
 			if reduceTaskId, err := strconv.Atoi(fileName[len(fileName)-1:]); err != nil {
 				panic(fmt.Sprintf("fileName name %s error reduceTaskId: %d \n", fileName, reduceTaskId))
 			} else {
+				for _, intermediateFile := range intermediateFileMap[reduceTaskId] {
+					if intermediateFile == fileName {
+						goto SKIP_DUPLICATE_FILES
+					}
+				}
 				intermediateFileMap[reduceTaskId] = append(intermediateFileMap[reduceTaskId], fileName)
 			}
+		SKIP_DUPLICATE_FILES:
 		}
 	case TypeReduce:
 		reduceTaskDoingNum--
@@ -255,7 +257,7 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
 	ret := false
-	time.Sleep(2 * time.Second)
+	time.Sleep(20 * time.Millisecond)
 
 	// Your code here.
 	mapTaskNum_M.Lock()
@@ -263,13 +265,13 @@ func (c *Coordinator) Done() bool {
 	reduceTaskNum_M.Lock()
 	defer reduceTaskNum_M.Unlock()
 
-	fmt.Println("mapTaskWaitingNum: ", mapTaskWaitingNum)
-	fmt.Println("mapTaskDoingNum: ", mapTaskDoingNum)
-	fmt.Println("mapTaskCompleteNum: ", mapTaskCompleteNum)
+	// fmt.Println("mapTaskWaitingNum: ", mapTaskWaitingNum)
+	// fmt.Println("mapTaskDoingNum: ", mapTaskDoingNum)
+	// fmt.Println("mapTaskCompleteNum: ", mapTaskCompleteNum)
 
-	fmt.Println("reduceWaitingTaskNum: ", reduceWaitingTaskNum)
-	fmt.Println("reduceTaskDoingNum: ", reduceTaskDoingNum)
-	fmt.Println("reduceTaskCompletedNum: ", reduceTaskCompletedNum)
+	// fmt.Println("reduceWaitingTaskNum: ", reduceWaitingTaskNum)
+	// fmt.Println("reduceTaskDoingNum: ", reduceTaskDoingNum)
+	// fmt.Println("reduceTaskCompletedNum: ", reduceTaskCompletedNum)
 
 	if mapTaskWaitingNum == 0 && mapTaskDoingNum == 0 && reduceWaitingTaskNum == 0 && reduceTaskDoingNum == 0 {
 		return true
@@ -293,13 +295,14 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	reduceTaskState = make(map[int]TaskState)
 	intermediateFileMap = make(map[int][]string, 0)
 
-	i := 0
 	for _, filename := range inputFilenames {
 		// fmt.Println("filename ", filename)
 		// fmt.Println("i ", i)
 		mapTaskState[filename] = waiting
+
+	}
+	for i := 0; i < nReduce; i++ {
 		reduceTaskState[i] = waiting
-		i++
 	}
 	reduceNum = nReduce
 	reduceWaitingTaskNum = nReduce
